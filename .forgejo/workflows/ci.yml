@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  checkout-only:
+    name: Checkout verification (no executable source detected)
+    runs-on: host
+    steps:
+      - name: Checkout (native git)
+        run: |
+          set -euo pipefail
+          work="$GITHUB_WORKSPACE"
+          cd /
+          rm -rf "$work"
+          mkdir -p "$work"
+          git -c http.extraheader="Authorization: token ${FORGEJO_TOKEN}" \
+              clone --depth 1 --branch "${GITHUB_REF_NAME}" \
+              "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" "$work"
+          cd "$work" && git rev-parse HEAD
+        env:
+          FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: confirm checkout and list tree
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          echo "No Cargo.toml/package.json/go.mod/requirements.txt/*.py/*.sh detected at repo root."
+          echo "This CI verifies the repo checks out cleanly; it does not claim to test content it cannot execute."
+          find . -maxdepth 2 -not -path "*/.git*" | sort
