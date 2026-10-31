@@ -1,14 +1,14 @@
+# Forgejo Actions (git.arf.io). Runs on a host runner: no containers, native git checkout.
 name: CI
 
 on:
   push:
-    branches: [main, master]
   pull_request:
   workflow_dispatch:
 
 jobs:
-  checkout-only:
-    name: Checkout verification (no executable source detected)
+  test:
+    name: Tests
     runs-on: host
     steps:
       - name: Checkout (native git)
@@ -25,9 +25,33 @@ jobs:
         env:
           FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: confirm checkout and list tree
+      - name: Toolchain and shells
         run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          # a host runner is a shared machine: use its toolchain, never install one into it
+          if ! command -v cargo >/dev/null; then
+            echo "::error::cargo is not installed on this runner (needs Rust + clippy); ask the runner's admin"
+            exit 1
+          fi
+          cargo --version
+          for s in fish bash zsh bwrap fzf; do printf '%-6s ' "$s"; command -v "$s" || echo "missing: its tests are skipped"; done
+
+      - name: Syntax checks
+        run: |
+          set -euo pipefail
           cd "$GITHUB_WORKSPACE"
-          echo "No Cargo.toml/package.json/go.mod/requirements.txt/*.py/*.sh detected at repo root."
-          echo "This CI verifies the repo checks out cleanly; it does not claim to test content it cannot execute."
-          find . -maxdepth 2 -not -path "*/.git*" | sort
+          # one file per call: `bash -n a b` only checks a
+          for f in install.sh shell/bash/complete_me.bash tests/harness/bash_capture.bash; do bash -n "$f"; done
+          if command -v fish >/dev/null; then fish -n shell/fish/complete_me.fish; fi
+          if command -v zsh >/dev/null; then for f in shell/zsh/complete_me.zsh tests/harness/zsh_capture.zsh; do zsh -n "$f"; done; fi
+
+      - name: Tests (goldens + fish/bash/zsh end-to-end) and clippy
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          # fleet hosts build through arf-build (target dirs off NFS); anywhere else, plain cargo
+          if [ -f "$HOME/.local/bin/arf-build" ]; then build="bash $HOME/.local/bin/arf-build"; else build=cargo; fi
+          $build test --release --locked
+          $build clippy --release --locked --all-targets -- -D warnings
